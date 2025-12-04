@@ -1,0 +1,12 @@
+# Entornos virtuales
+.venv/
+venv/
+
+# Archivos de Python
+__pycache__/
+*.pyc
+
+# Archivos de configuración
+.env
+*.html
+.ipynb_checkpoints/
