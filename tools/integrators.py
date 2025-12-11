@@ -1,8 +1,13 @@
 # stranglib/integrators.py
+from typing import Tuple
+
 import numpy as np
 from numpy.linalg import norm
-from .system import m, e, H_physical
+import pandas as pd
 from scipy.integrate import solve_ivp
+from scipy import symbols, solve, Eq
+
+from .system import m, e, H_physical
 
 def simulate_analytic(q0, p0, t_span, t_eval, E_func):
     """
@@ -196,3 +201,74 @@ def jacobian_step_1d(q, p, t, Eext, dt, E_func, E_dot_func, eps=1e-6):
 
     return J
 
+def symplectization1_step(p_n: np.ndarray, r_n: np.ndarray, q_n: np.ndarray, t_n: np.ndarray, E: callable, dE_ds: callable, f: callable, df_dr: callable, h: np.ndarray = 0.1, charge: float = 1, m: float = 1, C: float = 0) -> Tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+    p_np1: np.ndarray = p_n + h * charge * E(t_n + C)
+    r_np1: np.ndarray = r_n + h * charge * q_n * dE_ds(t_n + C)
+    q_np1: np.ndarray = q_n + h * f(r_np1) * p_np1
+    t_np1: float = t_n + (h/m) * df_dr(r_np1) * (np.linalg.norm(p_np1)**2) #*standard 2-euclidean norm
+    # print(h * charge * q_n * dE_ds(t_n + C))
+
+    return p_np1, r_np1, q_np1, t_np1
+
+def simulate_symplectization1(p0: np.ndarray, r0: np.ndarray, q0: np.ndarray, t0: float, t_target: float, E: callable, dE_ds: callable, f: callable, df_dr: callable, charge: float = 1, m: float = 1, C: float = 0, n_steps: int = 10) -> pd.DataFrame:   
+    if t_target < t0:
+        raise ValueError(f"Target time {t_target} must be greater or equal than the initial time {t0}")
+    if t_target == t0:
+        print(f"Warning, initial time is the same as target time ({t_target}), so the output will be the initial values")
+        return p0, r0, q0, t0
+    
+    h: float = (t_target - t0)/n_steps
+    results: pd.DataFrame = pd.DataFrame({'p': [p0], 'r': [r0], 'q': [q0], 't': [t0]}, dtype=object)
+    p_n: np.ndarray = p0
+    r_n: np.ndarray = r0
+    q_n: np.ndarray = q0
+    t_n: np.ndarray = t0
+    for i in range(n_steps):
+        p_n, r_n, q_n, t_n = symplectization1_step(p_n, r_n, q_n, t_n, E, dE_ds, f, df_dr, h, charge, m, C)
+
+        #*Add nth step to results
+        nth_step_results: pd.DataFrame = pd.DataFrame({'p': [p_n], 'r': [r_n], 'q': [q_n], 't': [t_n]}, dtype=object)
+        results = pd.concat([results, nth_step_results], ignore_index=True)
+
+    return results
+
+def symplectization2_solve_rnp1() -> np.ndarray:
+    r, r_n, B_n = symbols('r_np1 r_n B_n', real=True)
+    f = r
+    if f is None:
+        raise NotImplemented('f must be a valid expression')
+    g = r - B_n * f - r_n
+    return solve(Eq(g, 0), r)[0]
+
+def symplectization2_step(p_n: np.ndarray, r_n: np.ndarray, q_n: np.ndarray, t_n: np.ndarray, E: callable, dE_ds: callable, f: callable, df_dr: callable, r_np1_solver: callable= symplectization2_solve_rnp1, h: float = 0.1, charge: float = 1, m: float = 1, C: float = 0) -> Tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+    B_n: np.ndarray = h * charge * q_n * dE_ds(t_n + C)
+    # print("B_n", B_n)
+    r_np1: np.ndarray = r_np1_solver(r_n=r_n, B_n=B_n)
+    # print("r_np1", r_np1)
+    p_np1: np.ndarray = p_n + h * charge * E(t_n + C) * f(r_np1)
+    q_np1: np.ndarray = q_n + (h / m) * p_np1
+    t_np1: float = t_n - h * df_dr(r_np1) * charge * q_n * E(t_n + C)
+
+    return p_np1, r_np1, q_np1, t_np1
+
+def simulate_symplectization2(p0: np.ndarray, r0: np.ndarray, q0: np.ndarray, t0: float, t_target: float, E: callable, dE_ds: callable, f: callable, df_dr: callable, r_np1_solver: callable= symplectization2_solve_rnp1, charge: float = 1, m: float = 1, C: float = 0, n_steps: int = 10) -> pd.DataFrame:   
+    if t_target < t0:
+        raise ValueError(f"Target time {t_target} must be greater or equal than the initial time {t0}")
+    if t_target == t0:
+        print(f"Warning, initial time is the same as target time ({t_target}), so the output will be the initial values")
+        return p0, r0, q0, t0
+    
+    h: float = (t_target - t0)/n_steps
+    results: pd.DataFrame = pd.DataFrame({'p': [p0], 'r': [r0], 'q': [q0], 't': [t0]}, dtype=object)
+    p_n: np.ndarray = p0
+    r_n: np.ndarray = r0
+    q_n: np.ndarray = q0
+    t_n: np.ndarray = t0
+    for i in range(n_steps):
+        p_n, r_n, q_n, t_n = symplectization2_step(p_n, r_n, q_n, t_n, E, dE_ds, f, df_dr, r_np1_solver, h, charge, m, C)
+
+        #*Add nth step to results
+        nth_step_results: pd.DataFrame = pd.DataFrame({'p': [p_n], 'r': [r_n], 'q': [q_n], 't': [t_n]}, dtype=object)
+        results = pd.concat([results, nth_step_results], ignore_index=True)
+
+    return results
